@@ -2075,40 +2075,7 @@ EXCEPTION
 END
 $$;
 
-/*
- *  Custom maker function. Accepts custom destination name.
- */
-CREATE OR REPLACE FUNCTION custom_maker (p_dest_table text, p_dblink_id int, p_query text) RETURNS void
-    LANGUAGE plpgsql
-    AS $$
-DECLARE
 
-v_data_source               text;
-v_insert_refresh_config     text;
-
-BEGIN
-
-SELECT data_source INTO v_data_source FROM @extschema@.dblink_mapping WHERE data_source_id = p_dblink_id; 
-IF NOT FOUND THEN
-	RAISE EXCEPTION 'ERROR: database link ID is incorrect %', p_dblink_id; 
-END IF;  
-
-v_insert_refresh_config := 'INSERT INTO @extschema@.refresh_config_custom(dest_table, dblink, query) VALUES('
-    ||quote_literal(p_dest_table)||', '|| p_dblink_id||', '||quote_literal(p_query)||')';
-
--- Insert record in refresh_config_custom
-RAISE NOTICE 'Inserting record in @extschema@.refresh_config_custom';
-EXECUTE v_insert_refresh_config;	
-RAISE NOTICE 'Insert successful';
-
-RAISE NOTICE 'Calling custom refresh function';
-PERFORM @extschema@.refresh_custom(p_dest_table, FALSE);
-RAISE NOTICE 'all done';
-
-RETURN;
-
-END
-$$;
 
 /*
  *  Custom refresh destroyer function. Pass archive to keep table intact.
