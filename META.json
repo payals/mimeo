@@ -1,37 +1,39 @@
 {
     "name": "mimeo",
-    "abstract": "Extension for specialized replication between PostgreSQL instances",
-    "version": "0.4.3",
+    "abstract": "Extension for specialized, per-table replication between PostgreSQL databases",
+    "version": "1.5.1",
     "maintainer": [ 
         "Keith Fiske <keith@omniti.com>"
     ],
     "license": "postgresql",
     "generated_by": "Keith Fiske",
-    "release_status": "testing",
+    "release_status": "stable",
     "prereqs": {
         "runtime": {
             "requires": {
                 "PostgreSQL": "9.1.0",
-                "dblink": "1.0.0",
-                "pg_jobmon": "0.3.0"
+                "dblink": "1.0.0"
+            },
+            "recommends": { 
+                "pg_jobmon": "1.3.2"
             }
         }
     },
     "provides": {
         "mimeo": {
-            "file": "sql/mimeo.sql",
+            "file": "sql/mimeo--1.5.1.sql",
             "docfile": "doc/mimeo.md",
-            "version": "0.4.3",
-            "abstract": "Extension for specialized replication between PostgreSQL instances"
+            "version": "1.5.1",
+            "abstract": "Extension for specialized, per-table replication between PostgreSQL databases"
         }
     },
     "resources": {
         "bugtracker": {
-            "web": "https://github.com/keithf4/mimeo/issues"
+            "web": "https://github.com/omniti-labs/mimeo/issues"
         },
         "repository": {
-            "url": "git://github.com/keithf4/mimeo.git" ,
-            "web": "https://github.com/keithf4/mimeo",
+            "url": "git://github.com/omniti-labs/mimeo.git" ,
+            "web": "https://github.com/omniti-labs/mimeo",
             "type": "git"
         }
     },    
@@ -41,6 +43,8 @@
     },
     "tags": [
         "replication",
-        "materialized view",
+        "table",
+        "per-table",
+        "logical"
     ]
 }

@@ -1,16 +1,20 @@
-mimeo
+[![PGXN version](https://badge.fury.io/pg/mimeo.svg)](https://badge.fury.io/pg/mimeo)
+
+Mimeo
 =====
 
-mimeo is an extension that provides specialized replication between PostgreSQL instances. It currently provides snapshot (whole table copy), incremental (based on an incrementing value like timestamp, serial (coming soon), etc), and DML (inserts, updates and deletes).
+Mimeo is an extension that provides specialized, per-table replication between PostgreSQL instances. It currently provides snapshot (whole table copy), incremental (based on an incrementing timestamp or id), and DML (inserts, updates and deletes).
 
-It currently requires the pg_jobmon (see my other repositories) extension to log all replication activity. May see about making this optional in the future, but I would hope that anyone using a replication scheme like this would want it logged in detail and monitored!
+Also installing the pg_jobmon extension (see other repositories in omniti-labs) to log all replication activity and provide monitoring is highly recommended. 
 
-Still in very early testing. Would appreciate any feedback!
+In addition to the documentation, some additional information about this extension is discussed on the author's blog http://www.keithf4.com/tag/mimeo/
 
 INSTALLATION
 ------------
 
-Requirements: dblink & pg_jobmon (>0.3.0) extensions
+Requirements: PostgreSQL 9.1+, dblink extension 
+
+Recommendations: pg_jobmon (>= 1.3.2) extension (https://github.com/omniti-labs/pg_jobmon)
 
 In directory where you downloaded mimeo to run
 
@@ -21,6 +25,8 @@ Log into PostgreSQL and run the following commands. Schema can be whatever you w
 
     CREATE SCHEMA mimeo;
     CREATE EXTENSION mimeo SCHEMA mimeo;
+
+See the doc folder for more usage information. The howto.md file provides a quickstart guide. The mimeo.md file contains a full reference guide.
 
 
 UPGRADE
@@ -34,17 +40,17 @@ Make sure all the upgrade scripts for the version you have installed up to the m
 AUTHOR
 ------
 
-Keith Fiske
-OmniTI, Inc - http://www.omniti.com
+Keith Fiske  
+OmniTI, Inc - http://www.omniti.com  
 keith@omniti.com
 
 
 LICENSE AND COPYRIGHT
 ---------------------
 
-mimeo is released under the PostgreSQL License, a liberal Open Source license, similar to the BSD or MIT licenses.
+Mimeo is released under the PostgreSQL License, a liberal Open Source license, similar to the BSD or MIT licenses.
 
-Copyright (c) 2012 OmniTI, Inc.
+Copyright (c) 2016 OmniTI, Inc.
 
 Permission to use, copy, modify, and distribute this software and its documentation for any purpose, without fee, and without a written agreement is hereby granted, provided that the above copyright notice and this paragraph and the following two paragraphs appear in all copies.
 

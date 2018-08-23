@@ -1,0 +1,519 @@
+1.5.1
+-- Change cursor name to include table name so it's easier to identify which table is getting data pulled on the source just by looking at the query being run. Since a cursor name cannot have non-standard characters, it may not match your table name exactly if it has any.
+
+
+1.5.0
+-- Fixed incremental time refresh to work properly when the source table is initially empty and later starts getting data. Previously the lower boundary was always being reset to the value of CURRENT_TIMESTAMP if the destination remained empty after setup. This could cause data that is later added on the source to then be missed if it happens to be outside the current window. Now the lower boundary remains the timestamp at the time of replication setup (as the documentation states) until newer data is added to the source. Then replication begins to work as normal and obeys the boundary configuration as well.
+    -- NOTE: Recommended to do a data validation check on any incremental replication tables that started out empty when they were created.
+
+-- Reworked validate_rowcount() function significantly to allow more customizable checks for inserter & updater validation. Please review changes carefully if you regularly use this function as both the input & output parameters have changed.
+    -- There are now lower and upper interval parameters to determine the block of data to compare. The value is always calculated from the maximum control value on the destination. So the lower boundary value is (max - lower) and the upper boundary is (max - upper).
+    -- If these values are left NULL, then all rows are compared.
+    -- The output values are the conditional values used in the count query and they are now obtained from the destination, not the source.
+
+-- Added new configuration option to dml & logdel replication to reduce transaction times on the source database at the expense of higher disk usage on the destination: insert_on_fetch. Default behavior has not changed so this is only relevant if the option is manually set. See documentation for further explanation of this option.
+
+-- Added new function: snapshot_monitor(). This can monitor for when snapshot tables are possibly growing too large to be easily replicated in their entirety every refresh run. Tables being returned can then be considered for another replication method (incremental or dml). Paramenters are available for setting minimum size and rowcount amounts. Thanks to Nicole Daley (nicoledaley) for the work on this feature.
+
+
+
+1.4.4
+-- Snapshot maker now gives a clearer error when the destination table already exists and clarifies that it cannot (Github Issue #18).
+-- Further fixes to validate_rowcount() for incremental replication. May have been giving incorrect match failure before due to not always setting the proper upper boundary value.
+
+
+1.4.3
+-- Added interval option to validate_rowcount() function. This allows the validation to ignore more recent data with incremental replication. For example, if you'd like to ignore the most recent 2 days of data (for a time-based control column), you'd set this parameter to '2 days'. 
+    -- The current max value of the destination table is used as the baseline value when subtracting the given interval.
+    -- Note the parameter is of type text but the value must be able to be cast to either an interval or integer data type.
+
+
+1.4.2
+-- Fix validate_rowcount() function to work properly with incremental replication types. Was not setting proper boundaries to get correct counts.
+    -- This bug was introduced in v1.4.0
+
+
+1.4.1
+-- Fixed bug in maker functions that would cause them to fail if pg_jobmon was not installed. Thanks to Myon from #postgresql for the bug report.
+
+
+1.4.0
+-- New option for snapshot refresh to not check for write changes on master and ALWAYS refresh the table. New boolean config option in refresh_config_snap: check_stats (defaults to true) and new parameter to refresh_snap() function: p_check_stats. Default behavior is still to not refresh the table if the source has not changed (Github Issue #15).
+-- Added a sort to the Makefile when creating the sql extension file. Allows more predictable output between builds (Github Push Request #16).
+-- Added parameter option to check_missing_source_tables() function to include views (p_views).
+-- Moved the source_table column to the top parent table in the refresh_config table inheritance tree. It was already a common column in all config tables, so just makes querying for config information easier.
+    -- Simplified code in several support functions to take advantage of this.
+-- Added jobmon logging to the maker functions. They now create their own logged jobs to keep track of where they are (setup, refreshing, index creation).
+    -- New p_jobmon option to the maker function determines both if the creation will be logged in jobmon and if jobmon tracking is enabled for future refreshes of that table. Defaults to true for both if pg_jobmon is installed.
+-- All exception blocks of maker & refresh jobs should now honor the configuration option given for whether or not to use pg_jobmon. Previously you may have still been getting refresh errors logged into jobmon even if you'd explicitly configured it to not use pg_jobmon.
+-- Made jobmon column in refresh_config (and all child tables) NOT NULL. If this update fails due to this change, please ensure all rows have a value for this column.
+-- Fixed more edge cases where mixed-case/special-characters in object names weren't being handled properly.
+
+
+1.3.9
+-- Moved advisory lock check as early as possibly in all refresh functions. Concurrent refresh runs on the same destination table that happened within 0-5 seconds of each other could possibly encounter a race condition. This is only really an issue with incremental inserter replication where the the race condition caused the same time period/id value block to be obtained for two different jobs. This could possibly have caused duplicate data if there is no primary/unique key on the destination. If there is a unique key, no duplication occurred and a duplicate key error was raised. Chance for this is still there, but significantly reduced. Extremely difficult to remove 100% risk at this time (further work to run_refresh.py to reduce risk is under way), so advise that you space refresh runs out as much as you are able to.
+    -- IMPORTANT NOTE: Please run the row count check function on any inserter replication tables to check data integrity.
+-- Fixed exception syntax error in logdel_maker() function (Github Pull Request #13).
+-- Fixed bug in exception block that would not clear dblink connection if logdel_maker() function was cancelled mid-run (will fix this bug in other maker functions in future patch).
+-- Fixed bug in check_source_columns() that would break if any custom types were used (atttypid can be different on different clusters).
+-- Fix validate_rowcount() to properly handle empty tables.
+-- Fixed some pgtap tests that had hardcoded the mimeo schema outside of the search_path at the top. Thanks to Myon on #postgresql for the feedback.
+
+
+1.3.8
+-- Turned on autocommit in run_refresh.py python script. This avoids a race condition where if it is used in a transaction, with a second transaction starting immediately before the previous commits, the incremental refreshes can have the same data pulled twice. If you have unique constraints on the destination table, you'd get violation errors. Otherwise, you may have duplicate data in your destination tables. It is higly advised you compare your destination & source tables. The included validate_rowcount() function can assist you with this. Thanks to Brian Dunavant (https://github.com/bdunavant) for assistance in tracking down this issue and correcting my grammar.
+
+
+1.3.7
+-- Fixed bug in snapshot replication where it would not always catch every column change on the source.
+
+
+1.3.6
+-- Added the p_lock_wait parameter from the concurrent_lock_check() function to all the refresh functions. This allows a simple method to tell the refresh function that you'd like to try and wait for a current advisory locks on the destination table and then proceed with the refresh when it's available. Previously, if the lock was held, all refresh functions would immediately return with a notice that another session held the lock. Now you can configure a wait time or tell it to wait forever (be extremely careful with the latter) with a single function call.
+
+
+1.3.5
+-- Added a lock wait argument to concurrent_lock_check() function to allow a specified period of time to wait for the advisory lock before giving up. The following are valid values:
+    -- NULL (default value if not set): Do not wait at all for an advisory lock and immediately return FALSE if one cannot be obtained (this was the old behavior).
+    -- > 0: Keep retrying to obtain an advisory lock for the given table for this number of seconds before giving up and returning FALSE. If lock is obtained in this time period, will immediately return TRUE.
+    -- <= 0: Keep retrying indefinitely to obtain an advisory lock. Will only return when the lock is obtained and returns TRUE. Ensure your code handles this condition properly to avoid infinite waits.
+-- Will keep retrying once per second until lock is obtained or wait period expires.
+
+-- Concurrent lock check code greatly simplified and now avoids possible race conditions discovered during code review.
+-- Thanks to https://github.com/bdunavant for assistance with this patch
+
+
+1.3.4
+-- Provide a safer method and clearer error message when running dml_destroyer() or logdel_destroyer() and mimeo is unable to automatically drop the trigger on the source table. Mimeo checks first to see if it's even possible to drop the trigger and immediately stops if it can't, providing a clear message that the trigger must be manually dropped first.
+-- Added a function for performing the advisory lock check that is used to prevent concurrent refresh runs on the same table (concurrent_lock_check()). Allows other applications to more easily interact with mimeo if they have to edit destination tables as well. Allows either mimeo or the other application to cleanly handle concurrent run attempts and avoid deadlocks.
+-- Drop dhb_attr column from dblink_mapping_mimeo table. Was never being used even if set.
+
+
+1.3.3
+-- Fixed repull functionality for incremental refresh functions. For serial-based replication, using the p_repull_start & p_repull_end arguments was not working correctly. The destination data was not being deleted and could either cause unique key violations or duplicate data. Run the validate_rowcounts() function after this fix is installed to see if you have any issues. If you ran a repull without using p_repull_start or p_repull_end, it worked fine.
+-- Fixed unclear error in validate_rowcount() function if called on a destination table that isn't configured.
+-- Fixed broken update file for updating mimeo from 1.3.1 to 1.3.2. File name had wrong formatting.
+-- Added pgTAP tests for better incremental repull testing
+
+
+1.3.2
+-- Fix check_name_length() function to work with PostgreSQL 9.1. Installation would fail with syntax errors. Named parameter support was not added for SQL functions until 9.2.
+    -- Function was added in version 1.1.0, so any updates from version 1.0.1 to later would fail on PostgreSQL 9.1. If anyone needs an update script for 1.0.1 to 1.3.2, please create an issue on github.
+    -- Upgrading PostgreSQL to >= 9.2 will also allow mimeo to be updated to 1.1.0 and greater (Recommended fix).
+
+
+1.3.1
+-- Fixed being able to use a view as a source table. This broke in 1.3.0 due to new checks to make sure that the source table existed. 
+    -- Note that DML-based replication will not work with views as a source (they didn't work before 1.3.0 either). 
+    -- Also, it will only work with updater replication if an underlying primary key is manually given during the maker function call.
+-- Reduced the number of new connections generated via dblink during refresh function calls.
+-- Allow dml & logdel maker functions to be run in parallel. Previously would get duplicate dblink connection name errors.
+-- Add pgTAP tests for view sources
+
+
+1.3.0
+-- NOTE: This update is a major refactoring of many of the core functions to support a new feature. I've done quite a bit of testing to try and ensure I've handled all known code paths (you can see all the new TAP tests), but I'll readily admit I may have missed some edge cases. I think the capabilities this tool now has, along with what I've learned along the way, have made it worth the effort. And again, many thanks to David Wheeler for the pgTAP project. A refactorization like this would never have been possible without extensive unit testing.
+-- Can now properly handle mixed-case, special characters & reserved words in object names (tables, columns, etc).
+-- All refresh functions for all replication types now determine the table column list by checking the source table. This was inconsistent before (some would go by source columns, others would go by destination). This will allow extra columns to be added to destination tables if desired, but they must always have all source columns at minimum (unless the filter option is used). This also means the destination tables must have their columns updated first before the source table has it added. If not, the refresh function will fail.
+-- The p_repull flag to refresh_dml() will no longer truncate the remote queue table immediately. This was done to try and avoid bloat and improve performance but it inadvertently caused issues if a full repull was ever cancelled. Since the queue table was always truncated immediately (and not rolled back due to being a remote query) that meant that if a repull was cancelled, all the recorded row changes in the queue at that time were lost. So a full repull would have to be completed anyway if this happened. This wasn't a problem with refresh_logdel since a truncate was not done to avoid losing deleted row data. Now refresh_dml() works like refresh_logdel() in this case and full repulls can safely be cancelled and go back to doing normal refreshes without data loss.
+-- Changed the run_refresh.py --connection default to "host=" instead of "host=localhost". This makes the default connection to the database use the local socket instead of TCP. Makes it act more predictibly like all other postgres executables (psql, pg_dump, etc). Please check all your scheduled runs of this function to ensure they are working properly after this update. 
+-- Removed security definer from all maker functions (if it existed). This allows the role that runs the maker function to be the owner of the object by default. Note that this now requires granting that role CREATE privileges in order to make the destination objects. Security definer still remains on the refresh functions so roles that don't have write privileges to destination tables can still refresh them.
+-- Whenever the destroyer functions for dml or logdel are called, the source trigger is now always the first thing that is attempted to be dropped. This allows a cleaner failure when the mimeo connection user is not the owner of the source table since only the owner can drop triggers. This should prevent the table or function from being dropped if the trigger is not and then breaking all writes to the source table. A cleaner method of handling this issue is in the works.
+-- An analyze of the new destination table is now always run at the end of any maker function call.
+-- Added a --version argument to run_refresh.py. This tells you the minimum version of mimeo this script is meant to work with.
+-- Added debugging option to destroyer functions.
+-- Added more debugging output for a lot of functions when p_debug is set.
+-- Internal function check_name_length() no longer takes schema parameter nor returns schema as part of object name.
+-- Added pgTAP testes to check for all new cases (mixed case, special characters, reserved words).
+-- Added pgTAP tests to ensure plain table replication method is properly resetting sequences (if configured).
+
+
+1.2.3
+-- Fixed bug with dml_maker() and logdel_maker() functions where proper permissions where not being granted to the queue table and trigger function. 
+    -- This was happening if an unprivileged role was used in the dblink_mapping_mimeo table. Unprivileged in this sense meaning it could not look up 
+        the permissions in the information_schema.table_privileges view to see all the roles that had write permissions on the given source table. 
+    -- In order to fix this, all future trigger functions for DML-based replication that are put on the source table are given SECURITY DEFINER. 
+        This makes it no longer necessary to look up existing source table permissions as was done before.
+    -- This also means any future permission changes to source tables will no longer affect writing to the queue table anymore. This should make 
+        administration of DML-based replication source tables easier since additonal privileges on the queue tables no longer have to be managed 
+        manually when source table privileges change.
+    -- Trigger functions for existing DML-based replication source tables are not fixed. It is advised to edit the trigger function(s) to add 
+        the SECURITY DEFINER flag to make future administration easier.
+-- Updated pgtap tests to test when source table owner is different than the dblink_mapping role.
+
+1.2.2
+-- New function "check_missing_source_tables()" can show tables that exist on the configured data sources that are not configured for replication.
+    -- Provides monitoring capability for situations where all tables on source should be replicated.
+    -- Optional parameter to check one specific data source. Otherwise, all sources listed in dblink_mapping_mimeo table are checked.
+    -- Returns a record value so WHERE conditions can be used to ignore tables that aren't desired.
+-- New function "check_source_columns()" can show columns that exist on source tables that do not exist on the destination
+    -- Provides monitoring capability for data source tables to see if columns have been added or types changed.
+    -- Does not check if destination has columns that source does not (therefore does not check if columns were dropped on source but not on destination).
+    -- Accounts for when the "filter" configuration option is used to only grab specific columns.
+    -- Optional parameter to check one specific data source. Otherwise, all sources listed in dblink_mapping_mimeo table are checked.
+    -- Returns a record value so WHERE conditions can be used to ignore tables and/or columns that don't matter for your situation.
+-- Fix bug during index creation when dblink is not installed in a schema called "dblink" (Github Issue #6).
+-- Added note to documentation about how to add/remove columns with DML replication and avoid errors.
+-- Added pg_tap tests for new monitoring functions & snapshot column change replication.
+
+
+1.2.1
+-- Fix index creation when schema of source table is in the search path of the dblink connection. Was causing maker functions to fail at index creation time.
+
+
+1.2.0
+-- Now supports incremental replication for serial/id columns. Works the same as existing incremenetal replication for time.
+    -- New p_type argument to inserter & updater maker functions to tell it which one you're using. Valid values are: "time" or "serial".
+    -- For time based, control column must be a timestamp type. For serial based, control column must be an integer type.
+    -- Only supports integer values greater than or equal to 0.
+    -- The upper boundary for each refresh batch is always 1 less than the current max of the source at the time it ran. This means that the boundary value isn't typically going to be relevant like it is for time, especially if you're using sequences for the control column values. This also means that the destination will always be at least 1 value behind the master. 
+    -- If you are not using a sequence for the control column values, and the same value will be inserted on the source in different commit sessions, be sure and set a boundary value so that replication does not copy anything within that range when the refresh runs. Example: Set the boundary to "5" if values within (max - 5) will still be inserting when the refresh runs.
+-- The p_boundary parameter data type in inserter/updater_maker functions has changed from "interval" to "text" and now defaults to NULL. This is to allow setting a boundary for either time or serial with the same maker function. If left NULL, the default value will be based on whether you choose time or serial for the incremental type.
+-- Fixed bug with incremental repull that all data might not be repulled. This would only happen on a rare edge case where the same exact value for the upper boundary was inserted multiple times right as replication ran. Some values would make it to the destination and would be considered the lower boundary for the next run and be excluded. You can use the row count validation function to check your existing data or just run a full repull to be sure you have everything on the destination. Note this was NOT an issue during normal refresh runs (this edge case was already handled there). This was only an issue when a full repull was done or during initial table setup.
+-- Added check_name_length to all dblink connection names to avoid annoying warning messages and get more consistent connection names.
+
+
+1.1.1
+-- Account for role names with special characters in them (dashes were the culprit that found this bug).
+-- Changed dblink_mapping table to an extension specific name: dblink_mapping_mimeo. Allows it to be installed in same schema as pg_jobmon if desired (github issue #4).
+-- Changed advisory lock system to use transactional advistory locks instead of explicit ones. Gets rid of errors in exception block when exception is hit before advisory lock is taken
+-- Organized documentation better
+
+
+1.1.0
+-- DML replication methods (dml & logdel) now support multiple destinations from a single source table (up to a maximum of 99). Be aware that this places multiple triggers on the source table that will have to populate as many queue tables as there are destinations. This can cause noticable performance penalties.
+-- Now properly checks that long source table names do not cause unexpected name truncation of the queue tables and trigger functions for DML replication types. There may still be name truncation if the table name is long, but it is now in a predictable manner and the suffixes are guarenteed to be there.
+-- Made destination table index recreation of source table indexes more reliable
+-- Removed unique constraint on refresh_config_dml/logdel (source_table) column. It's now unique per source/destination pair.
+-- Added check to refresh functions that if p_jobmon parameter is set true, it checks that pg_jobmon is actually installed before running. 
+-- Moved python script run_refresh.py from "extras" folder to "bin" folder. Now that it's actually getting installed as part of "make install" it's not really an extra anymore.
+-- Explicitly dropped the old run_refresh() plpgsql function. Use explicit refresh type calls or the python script for running scheduled refreshes.
+
+
+1.0.1
+-- Fix "make install" to work in PostgreSQL 9.3.x without throwing an error.
+-- "make install" now installs run_refresh.py to <postgresql_install_prefix>/bin
+-- Updated run_refresh.py to use argparse instead of getopt
+-- Removed --schema (-s) option from run_refresh.py. Script gets the mimeo schema automatically now.
+
+
+1.0.0
+-- Update version number to 1.0.0. First stable release. No code changes.
+-- Update pgtap tests to evaluate more functionality and handle edge cases that had resulted from bug reports in the past.
+
+
+0.13.2
+-- BugFix: Fixed dml_maker & logdel_maker to set permissions on queue table and trigger function properly. If source and destination table names did not match, the roles that had write privileges on the source table did not get the needed privileges on the mimeo trigger function and queue tables that are created on the source table. This lead to permission errors on the source table after mimeo setup. This update will not fix any existing replication setups.
+-- Added pgtap tests to check permissions on queue table and function
+
+
+0.13.1
+-- No changes to SQL code. 
+-- Added --jobs (-j) option to run_refresh.py to allow parallel refresh runs using multiple cores (if available). Uses multiprocessing library, not threading.
+-- Fixed update scripts for upgrades from 0.11.1 to 0.12.0 and 0.12.3 to 0.13.0 on version 9.1.x of PostgreSQL. Inconsistencies in the way default privileges are stored between 9.1 and 9.2 lead to an update failure when trying to preserve existing privileges. I had only previously tested the updates on 9.2. 
+
+
+0.13.0
+-- Made the pg_jobmon extension optional. It can be turned on or off on a per replication table basis using the new "jobmon" boolean column in the config table. If pg_jobmon is installed it will be set to true by default for all replication types, otherwise it will be set false. You can also set whether it is used at runtime with the "p_jobmon" parameter to the refresh functions.
+-- Jobmon logging has been added to the table replication method.
+-- Added row count validation function. Just does a basic row count comparison between the source and destination. Snapshot & incremental should match rows exactly. DML/Logdel most likely will not match exactly due to the nature of their replication methods, but they should be close.
+-- Changed the parameter in the destroyer functions for keeping/destroying the destination. It is now a boolean and defaults to true for KEEPING the table. Before, that parameter would default to destroying the table unless you passed a specific value. This should hopefully be safer stop accidentally destroying the destination table unless you specifically ask to do that. 
+
+
+0.12.3
+-- Fixed function that determines replication key to always get the oldest unique key when no primary key is available (lowest index oid value). Ensures it's more consistent when it is reused elsewhere to determine which key to use.
+
+
+0.12.2
+-- Separated process that determines source primary/unique key to use for replication into its own function. This was done to make some future work easier and simplify code.
+-- Maker functions that require primary/unique key (updater/dml/logdel) redone to use this new function.
+
+
+0.12.1
+-- Moved the attempt at taking an advisory lock to the earliest point possible in the refresh jobs to avoid edge case of overlapping jobs causing errors instead of exiting gracefully.
+-- Simplified exception blocks and made some error messages clearer in refresh functions.
+-- Added some simple exception block pgTAP tests.
+
+
+0.12.0
+-- Now supports creating GIN, GiST, and other expression indexes on the destination table as they exist on the source table. Previously, all indexes were recreated as b-tree (if at all) no matter what kind of index they were on the source.
+-- Above change led to major rewriting of the underlying code for the maker functions. Previously they all used the refresh_snap() function as the basis for doing initial, full data pull of the source. This lead to indexes being named a bit oddly (they all had "snap1" in the name). This is no longer the case and destination table index names should match closely to what they were on the source. This is only applied to newly created replication sets and no existing indexes on the destination will be changed.
+-- Logdel refresh function now has a "repull" option to do a complete refresh of data from the source. Note that it will NOT delete the rows on the destination that were previously deleted from the source (only deletes rows on the destination where mimeo_source_deleted column is null). Since a TRUNCATE cannot be done as is done with the other replication repulls, it is highly recommended to do a manual VACUUM of destination table after this is done, possibly even a VACUUM FULL to reclaim disk space.
+-- To help the above repull process be more efficient, an index is now created on the "mimeo_source_deleted" destination column of all newly created logdel replication tables. Existing replication tables will not have this index added. Recommend adding one if you need to do this repull method on old setups.
+-- DML & Logdel replication source queue tables now have indexes created on the "processed" and "processed, mimeo_source_deleted" columns respectively. This should help replication be more efficient for higher traffic tables that create larger queues. Existing replication sets will not have their source queue table modified to add this index. Recommend going back and manually adding it if you notice performance problems.
+-- Exception messages if dml/logdel maker functions fail are clearer about what has happened reguarding objects created on the source.
+-- Added p_debug option to maker functions. Also made debugging a little cleaner and have it provide more information in many cases.
+-- Bug Fix: WHERE condition of logdel replication wasn't working properly. 
+
+
+0.11.1
+-- Bug fix: New feature for refresh snap that skips the data pull if nothing changed on the source wasn't properly setting the last_run value in the config table. Could cause the job monitor to think the refresh job had not been run.
+
+
+0.11.0
+-- For snapshot replication, if the source's columns change and the destination tables & view are recreated, the original permissions are now automatically restored. Prior to this, the post_script array field had to be used to replay the grants. This is no longer required and you can remove any grant commands from the post_script columns.
+-- Snapshot refreshes can now detect whether the source table has had any DML changes (inserts, updates & deletes) and if there have been no changes, skip the data pull step completely. Does not work if source is a view. This can be a massive savings on system load for large tables that don't change often, but you still want to have a way to ensure you get any changes to the destination as soon as possible. The "track_counts" PostgreSQL setting must be turned on for this to work (which is the default).
+-- Truncate the old snapshot table as well after the view swap to avoid storing data twice. Thanks to Raghavendra for the suggestion.
+-- Snapshot & incremental maker functions now ensure that the given table names are schema qualified.
+-- Updated the extras functions for older source versions of postgresql. There's new dml functions for 8.1 as well as custom array_agg() functions that mimeo requires.
+
+
+0.10.6
+-- Bug fix: When repulling data from source for specific time periods in refresh_inserter() or refresh_updater(), it was recording the last_value of the batch instead of the real last value of the destination table. This bug was introduced in v0.10.0 with the new remote cursor data fetching method. If you've used this repull method, please check for data duplication on the destination. Repulling for that time period again should fix things.
+-- Note in docs that the only type of indexes from the source tables that are currently supported properly when recreating them on the destination are B-tree. 
+
+
+0.10.5
+-- If a sequence column type was a bigint but the highest value turned out to be an int, the sequence_max_value() function's query plan wasn't handling it well. Explicitly casting to a bigint during variable assignment fixed it.
+
+
+0.10.4
+-- Allow refresh_table() to handle if there are sequences in the destination table. See mimeo.md doc file for required configuration if this is needed.
+-- Added p_sequences argument to table_maker() so they can be setup to be reset right away. Maker function does not reset them, just adds them to the config table so the refresh function can do so.
+
+
+0.10.3
+-- Plain table refresh method didn't work to well if you had foreign keys set up on your dev database. Added an option in the config table to do a truncate cascade. Please be VERY careful when you use this. It is set to false by default and must be changed manually via an update to the config table.
+-- Bug fix: Make refresh_table() properly set the last_run column.
+
+
+0.10.2
+-- New refresh_table option for just doing a straight truncate and repull for a regular table. Only adding as a minor feature because other changes do not affect API and it's not recommended as a regular refresh job if possible. Also refresh_table() does not currently log to pg_jobmon, so cannot be monitored and will not set off any alerts if/when this refresh type fails. What this is useful for is having a way to get data from production to a staging/dev database where you still want to be able to edit the destination table. Could do that with Incremental or DML, but this avoids requiring any primary keys, control columns or write access on the source database.
+-- Removed custom enum type. Made things much more complicated than they needed to be. Enums are REALLY bad in extensions since you can never just add a new value in an update.
+-- The commands to remove the batch limit defaults & set the default boundaries for incremental replication were missing from the mimeo--0.9.3--0.10.1 bypass update file. If that file was used to update mimeo, the defaults were never changed and limits were still being set for new refresh jobs. Run those here again.
+
+
+0.10.1
+-- The update from 0.9.3 to 0.10.0 does not work for PostgreSQL versions less than 9.2 due to using GET STACKED DIAGNOSTIC. The direct upgrade script from 0.9.3 to 0.10.1 should provide a working by-pass if you're updating from <= 0.9.3.
+-- Removed call to GET STACKED DIAGNOSTIC since it's only compatible with 9.2
+-- Set permissions for queue table & trigger function on source. Will set properly for any roles that have permissions on the source table at the time the maker function is run.
+-- Changed queue table for dml replication on source to have "_q" suffix instead of "_pgq". Does not change existing queue table names.
+-- Also truncates the queue table name if it is longer than 61 characters to avoid max table length issues. Does not change existing queue table names.
+-- Added pgTAP tests for empty source table.
+
+
+0.10.0
+-- !!!!IMPORTANT!!!! run_refresh() plpgsql function has been deprecated. While the function file has been removed (so it won't install for brand new extension installations), it was not dropped from the database yet so installing this version will not suddenly stop scheduled replication using it. It will be explicitly dropped in version 1.0. See mimeo.md help file for more information why.
+-- refresh_snap (and hence all maker functions) now uses a remote cursor to fetch data in batches instead of all at once. This will allow better large snap refreshes and, more importantly, reduce errors when trying to setup replication with very large remote source tables. Without this, initial data pull could time-out or cause OOM-killer to cancel the maker function.
+-- Fixed all other refresh functions to also use the remote cursor as well.
+-- Now that pulling larger amounts of data is more efficient, there is no longer a default batch limit. Every refresh run will get all new rows available. This does not affect existing jobs, only newly created jobs after this version is installed. If you'd like remove the batch limits (recommended unless necessary), set the batch_limit column to NULL in all config tables.
+-- Boundary value is now required for inserter/updater configuration to help ensure consistency. Default is 10 minutes. If any had been set as NULL, it has been updated to the default.
+-- New "extras" folder in repository. Contains some versions of functions for when the source database is older than 9.1. These can make it possible to use mimeo to upgrade a database across major versions. While they could be used for normal replication purposes as well, that is not advised long term since an extension update would overwrite the functions if you rename them to their original names.
+-- Extras folder also contains a python script to replace the deprecated run_refresh function. Use this to help make running scheduled replication jobs easier and more reliable that the old plpgsql function.
+-- Set functions as STABLE or IMMUTABLE that can be.
+-- Bug Fix: Temporary queue table not getting dropped in refresh_logdel. Caused errors if same refresh was run in the same session.
+-- Bug Fix: Will now accurately report row counts even when inserting to partitioned tables
+-- Code cleanup
+-- Make pgTAP tests a little more extensive. Added tests for batch limits.
+
+
+0.9.3
+-- Reaching the exact batch limit to cause a pg_jobmon log warning for dml/logdel replication would almost never actually occur due to getting DISTINCT entries from the source queue table. This would make notification of replication possibly falling behind not occur. Changed the alert to happen if the actual batch reaches 75% of the batch limit.
+
+
+0.9.2
+-- Yet another bug with dml/logdel replication. Updates may not be applied to the destination. This bug was introduced in the new trigger created in 0.9.1. If you've not created any new replication jobs with 0.9.1, all dml/logdel replication jobs with a single primary/unique key column are fine. If you have created any, a new trigger will have to be made on the source table so the replication jobs should be recreated (run destroyer then maker functions. Note only the table owner can drop a trigger). 
+-- Please note that if you use composite primary/unique keys (more than one column), you will still need to re-create your replication jobs for dml & logdel replication to get a new trigger installed on the source if you are using any version older than this one. (Backup your destination logdel tables first to preserve the deleted rows). Single column primary/unique keys only have an issue with triggers created with 0.9.1.
+-- Made the source of the trigger functions more human readable.
+
+
+0.9.1
+-- Fix bug introduced in 0.9.0 that would prevent composite primary/unique key replication from working in dml & logdel replication. This was introduced in 0.8.3 to try and handle when one column of the composite key would change. Data isn't missed on the destination anymore like previous to 0.8.3, replication can just completely fail due to unique key violations (errors will show up in pg_jobmon logs or when you attempt to manually run the replication). In order to fix this bug, you will have to re-create any dml replication jobs that use a composite primary/unique key to update the trigger function. Jobs that have a single column key work fine.
+-- IMPORTANT: Backup your destination table for logdel replication in order to preserve your deleted rows. These can then be inserted back in after things are fixed.
+-- If a table's refresh job tries to run concurrently, it will set the main entry in pg_jobmon's job_log table to level 2 (WARNING). Will allow 3 consecutive concurrent run attempts to cause pg_jobmon to raise a warning alert to possible problems.
+
+
+0.9.0
+-- IMPORTANT NOTE: This update requires the new 1.0.0 version of pg_jobmon that was shortly before this update. Please update pg_jobmon before updating mimeo!
+-- Remove explicit calls to pg_jobmon schema. Would cause failure if pg_jobmon was installed in any schema other than "jobmon".
+-- Changed refresh functions that call dblink multiple times to use only a single, named connection instead of a new unnamed one for every call. Also ensured named connections are unique to each tables' refresh job to prevent conflicts.
+-- Fix repull option in dml to clear the queue table on the source database.
+-- Reaching the batch limit for any refresh function will now cause a level 2 (warning) alert to be triggered in pg_jobmon. Helps to prevent replication falling behind by giving warning that a higher rate of change is possibly happening on the source than the destination can handle.
+-- Changed all references to "pk_field" variable and column name to "pk_name". Was bad coding practice on my part using both names for the same thing throughout development. Changes visible to users are the optional argument name in updater/dml/logdel_maker & the column name in the refresh_config_updater/dml/logdel tables.
+-- Added pgTAP tests for data repull options
+
+
+0.8.4
+-- No changes to mimeo core code.
+-- Fixed Makefile to use egrep instead of trying to allow GREP env variable. Latter option wasn't working as expected on non-gnu environment (testing on OmniOS - http://omnios.omniti.com/).
+-- Fixed pgTAP destroyer tests so they don't destroy any non-test replication jobs or tables.
+
+
+0.8.3
+-- Fixed dml refresh not propagating updates and deletes. This bug was introduced in v0.7.0 when trying to simplify the refresh process. You may have to repull data for any dml jobs that have run with that version or later to bring the destination back into sync with the source.
+-- Fixed dml/logdel refresh not updating a row if it has a multi-column primary/unique key and only a subset of the columns of that key are changed. This was not a new bug and has been an issue from the beginning. You may have to repull data for any dml/logdel jobs that have run to bring the destination back into sync with the source. Be aware that a full refresh of a logdel table will remove the deleted rows that were logged to the destination. Recommend backing those tables up before a full refresh.
+-- Fixed edge case in refresh_dml/logdel where, if the batch limit was hit, the remote queue table might not mark the processed rows properly.
+-- Changed tests to use pgTAP. Testing suite is now much more extensive and helped find above bugs.
+
+
+0.8.2
+-- Moved index creation step after data insertion. This will apply to all maker functions as well.
+
+
+0.8.1
+-- IMPORTANT NOTE: The automatic indexes that were being created in versions <= 0.8.0 may not have kept the columns in the correct order for multi-column indexes. Please double-check any primary keys, unique indexes, or indexes created on the destination with versions <= 0.8.0
+-- Fixed above issue so that any indexes propagated from the source are created properly on the destination.
+
+
+0.8.0
+-- IMPORTANT NOTE: Signatures on maker functions & refresh_snap() have changes so they were dropped and recreated. Check permissions if needed before and after update.
+-- Automatic creation of indexes with maker functions. Does not automatically propogate future changes to indexes with refresh runs. Allows source and destination to be different (ex. often data warehouse destinations do not need indexes to save on space. Also prevents issues with partitioned destination tables).
+-- Ensure primary or unique indexes are always made on destination tables when using dml/logdel_maker() (update_maker() was already properly doing this). Will do this even when new p_index option is set to false.
+-- Changed funtion parameter 'p_pk_field' to 'p_pk_name' to be more consistent with other internal variable names.
+-- update_maker() now checks that if the column filter option is used, all columns that are part of primary/unqiue key are included.
+-- Fixed dml/logdel_destroyer() functions to actually remove the objects on the remote database.
+-- Fixed manually setting the primary/unique key types with the maker function parameter p_pk_type.
+-- Updated Makefile to allow setting of grep binary if needed during building.
+
+
+0.7.2
+-- IMPORTANT: To keep this update from interfering the least with current jobs, unschedule any running jobs. During this update, all jobs that try to run will be held until it is complete.
+-- Created new parent table column timestamptz 'last_run' that is used by run_refresh() to track when the job last ran.
+-- Changed last_value to only be a child table column in inserter & updater child config tables.
+-- Set run_refresh() to default to a batch number of 4 if no argument given.
+-- Created howto.md file in /doc folder to give more detailed setup and usage instructions for first time users
+
+
+0.7.1
+-- Fixed issue where columns with a fixed length would not migrate over properly (Ex: bit(7) would come over as bit(1))
+
+
+0.7.0
+-- IMPORTANT NOTE: ALL maker functions were dropped and replaced with a new signature in this update. Please check permissions and function calls before and after update.
+-- Added support for an array list filter that can be used to designate only specific columns that should be used for replication.
+    -- Source table trigger for dml/logdel types will only fire on UPDATES of the given columns (uses UPDATE OF col1 [, col2...]).
+-- Added support for conditional WHERE statement when pulling data. 
+    -- All conditional statements MUST either start with the 'WHERE' keyword or a comma separated list of tables that will be used in conditionals (must begin with a comma before first table in this case). 
+    -- Examples: (..., p_condition := 'WHERE col1 > 4 AND col2 < ''test'''), (..., p_condition := ', table2, table3 WHERE table1.col1 = table2.col1 AND table1.col3 = table3.col3')
+    -- JOINS are NOT guarenteed to work in all cases at this time (mostly for incremental. may work in snap & dml).
+    -- For logdel, DOES NOT apply the condition to rows that are deleted from the source table. Ensures all deleted rows on source are logged for warehousing.
+-- Fixed inserter & updater refresh to allow either p_repull_start or p_repull_end arguements and not require both. Allows to repull everything greater than p_repull_start or everything less than p_repull_end.
+-- Refresh functions will now handle job logging properly and give a clearer error message if the run fails before the job_id is actually created.
+-- Updated docs
+
+
+0.6.1
+-- Fixed dml & logdel queue objects on source to include the schema name as part of the queue table, queue function and queue trigger name. Fixes issues with tables of the same name in different schemas on source database not working for these types of replication due to name conflicts.
+-- NOTE: Existing jobs shouldn't be affected by this and you don't have to remake any of your jobs unless you run into this issue. All newly created jobs after this update are installed with the new queue naming format.
+
+
+0.6.0
+-- IMPORTANT NOTE: Before installation check permissions on the following functions that were dropped. They've got a new signature so will need to be granted the previous versions' permissions.
+-- updater, dml, and logdel maker functions can now automatically obtain the primary key or unique index from the source table. Parameters to manually set the key columns are still part of the maker functions if needed, but are now optional.
+-- Made source_table column in config table unique for dml and logdel replication. Cannot have multiple jobs with same source due to source queue tables.
+-- For all but snap, make destroyer functions more intelligent so they won't accidentally destroy local tables that aren't set up with mimeo.
+-- dml_maker() & logdel_maker() now clean up after themselves on the source database tables if a make run fails. They will remove the queue table, function & trigger if and only if configuration information for the source table given does not exist in their respective configuration table.
+-- New p_pulldata option for all maker functions to allow not pulling data from source if desired. It is set to TRUE by default.
+-- Documentation updates
+
+
+0.5.3
+-- Allow inserter, updater, dml & logdel maker functions to handle the destination table already existing. In that case, the destination table will not be touched and no data will be pulled from the source. For inserter & updater, the last_value function will either be given the max value of the current destination data or the timestamp at the time the maker function runs.
+-- Updated documentation
+-- Some code cleanup for simplification & clarity
+
+
+0.5.2
+-- Fixed all temp tables not getting removed in refresh_dml(). Caused errors if there were no new rows for consecutive runs in the same session. 
+
+
+0.5.1
+-- Fixed table definition for refresh_config table to not use hardcoded schema name for type column
+-- Added public schema to functions that change the search_path for their run. Fixes issues with finding certain objects located in public schema
+
+
+0.5.0
+-- Restructured SQL source files in /sql folder. Run 'make' to create the single file needed for extension installation or just cat all the files in /sql/tables and sql/functions together in the properly formatted filename.
+-- IMPORTANT NOTE: All maker functions have been dropped and recreated. Please check permissions before and after update!
+-- Created dml_maker, logdel_maker, dml_destroyer, logdel_destroyer functions. Will require a schema on the source database that mimeo replication user owns. Assumed to be the same schema as where the extension is installed on the destination. Will also require giving the mimeo replication user trigger privileges on the source table.
+-- Fixed refresh_dml to actually delete rows that were deleted on the source
+-- Removed temporary table creation in snapshot_destroyer if ARCHIVE was set. Now renames the current snap table to the old view name. This allows any permissions, indexes, etc to be kept.
+-- Changed table drop statements in snapshot_destroyer to be more friendly with other parts of extension (DROP IF EXISTS)
+-- Simplify maker functions to only have one version and more efficiently create the local table using the now better snapshot_destroyer. Custom destination table name is an optional argument. Default is NULL and maker will create destination table with same schema and tablename as the source unless this parameter is set.
+-- Update auth() function to support passwordless authentication string.
+
+
+0.4.6
+-- Fixed bug in refresh_snap that was causing the post_scripts not to run when a change on source schema happened
+-- Removed unused mviews table
+
+
+0.4.5
+-- Added run_refresh function to allow easier scheduling of running batch jobs. Uses new period column in config tables to determine how often a job should run
+-- Added batch_limit column in parent config table. This will be used by default for refresh jobs that use it, but p_limit parameter to the function can override it. Needed to do this so run_refresh can set limits and put in parent table just to make things easier since snap is the only thing that doesn't use it.
+-- Handle QUERY_CANCELED exception. Only releases advisory lock to prevent a manual run/cancel locking out all other jobs. REMINDER that a mimeo replication job should be handled with the jobmon.cancel_job() function to properly log the cancellation.
+
+
+0.4.4
+-- IMPORTANT UPDATE NOTE: Old versions of functions were dropped. Check function permissions before and after this update to ensure they're reset properly.
+-- Allow refresh inserter/updater to repull either all data or a specified time period of data from the source. refresh dml can do a full refresh of data from source. Did NOT set this up for refresh logdel at this time.
+-- Make debug parameter optional. Default false. Can be turned on by using named parameter option with functions that have multiple defaults. Batch limit should now be called as named parameter option as well to ensure future compatibility.
+
+
+0.4.3
+-- Handle edge case when refresh inserter/updater batch is equal to the limit and the limit cuts off timestamps of equal value past the batch limit. In this case, the rows with the upper boundary timestamp will be removed from the batch. If the batch is equal to the limit and all rows contain exactly the same timestamp value, this will cause a job failure. The batch limit must be increased to handle it. 
+-- Simplified how refresh_updater figures out its upper boundary value.
+-- Named optional limit parameter in refresh functions (p_limit).
+-- Fixed resetting search path in advisory lock attempt.
+-- Fixed spelling of boundary (boundry) in refresh_updater. Mispelled variables make debugging a pita.
+
+
+0.4.2
+-- Fix exceptions in remaining functions to handle an exception being thrown before first logged step. inserter/updater were fixed in 0.4.1
+
+
+0.4.1
+-- Fix inserter/updater timestamp based refresh to be able to handle DST for servers not running in GMT/UTC
+-- IMPORTANT NOTE: All jobs made before this update will default to the dst_active config option being true.
+--      BE SURE TO CHECK YOUR CONFIGURATION SO IT IS SET ACCORDINGLY! I set it to true to ensure data isn't missed by accident for existing jobs.
+--      But this will cause replication to stop during DST time changes. Please plan accordinly.
+--      Any new jobs created using the inserter/updater maker functions will set the dst_active option based on the result of the dst_utc_check() function.
+
+
+0.4.0
+-- Restructured config table. Made a child table for each refresh type inheriting from a generic parent. Allows tighter control of data and easier extension maintenance
+-- Simplified inserter/updater destroyer functions
+-- Fixed inserter/updater/dml/logdel refresh functions to better handle no new rows from source
+-- Fixed inserter/updater maker functions to set proper type in config table and changed boundary parameter from text to interval
+-- Cleaned up unused variables in functions
+-- More consistent code formatting of functions
+
+
+0.3.3
+-- Added new updater_maker and updater_destroyer functions. Also added support for composite keys in refresh_updater function.
+
+
+0.3.2
+-- Added new inserter_maker and inserter_destroyer functions
+
+
+0.3.1
+-- Made dblink_mapping.data_source_id column a real serial column (default is the next sequence ID) to make setup easier
+-- Made non-existent database link ID error a little clearer
+-- Made snapshot_destroyer parameter name clearer in what its use is. Required dropping function so please re-check your function permissions.
+-- Documentation update.
+
+
+0.3.0
+-- Added new snapshot_maker and snapshot_destroyer functions
+
+
+0.2.3
+-- Added ORDER BY to remote select query to fix missing data on destination when the limit is actually used
+
+
+0.2.2
+-- Changed to using pg_try_advisory_lock and failing gracefully when concurrent jobs are running. Logs that job didn't run and why
+
+
+0.2.1
+-- Actually fix the dupe issue with inserter function
+
+
+0.2.0
+-- Renamed refresh_incremental to refresh_inserter
+-- Fixed bug in refresh_inserter that would cause duped inserts and/or missing data
+-- Added refresh_updater
+-- Added type column to config table. Allows easier automation (Ex: cronjob to run all snaps)
+
+-- NOTE: After update of this table, set the type for all current jobs and then set column to NOT NULL
